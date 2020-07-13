@@ -30,18 +30,21 @@
 	RS232_OUTBUF_PTR = $f9
 
 	!macro start_at .address {
-	  * = basic
-	  !byte $0c,$08,$00,$00,$9e
-	  !if .address >= 10000 { !byte 48 + ((.address / 10000) % 10) }
-	  !if .address >=  1000 { !byte 48 + ((.address /  1000) % 10) }
-	  !if .address >=   100 { !byte 48 + ((.address /   100) % 10) }
-	  !if .address >=    10 { !byte 48 + ((.address /    10) % 10) }
-	  !byte $30 + (.address % 10), $00, $00, $00
-	  * = .address
+		* = basic
+		!byte $0c,$08,$00,$00,$9e
+		!if .address >= 10000 { !byte 48 + ((.address / 10000) % 10) }
+		!if .address >=	 1000 { !byte 48 + ((.address /	 1000) % 10) }
+		!if .address >=		100 { !byte 48 + ((.address /		100) % 10) }
+		!if .address >=		 10 { !byte 48 + ((.address /		 10) % 10) }
+		!byte $30 + (.address % 10), $00, $00, $00
+		* = .address
 	}
 
-	roomsize1 = $08e0
+	roomsize1 = $08df
+	roomitems = $08e0
 	roomsize2 = $08e1
+	roombgcol = $08e2
+	
 	roomdirty = $08ef
 	
 	screenpos = $08f0
@@ -65,6 +68,11 @@
 	jsr rs232_open
 	lda #$01
 	sta roomdirty
+	
+	lda #5
+	sta roomsize1
+	lda #34
+	sta roomsize2
 
 .main_loop
 	lda roomdirty
@@ -78,10 +86,10 @@
 	jmp .main_loop
 	
 .keyboard_read
-	;; inc bocol
-	;; jsr SCNKEY
+	jsr SCNKEY
 	jsr GETIN
-	sta bgcol
+	cmp #0
+	beq .kbd_waitup
 	cmp #'N'
 	beq .go_north
 	cmp #'S'
@@ -90,6 +98,8 @@
 	beq .go_west
 	cmp #'E'
 	beq .go_east
+	cmp #'T'
+	beq .take_item
 .kbd_waitup
 	;; jsr SCNKEY
 	jsr GETIN
@@ -97,6 +107,10 @@
 	bne .kbd_waitup
 	rts
 
+;; TODO item index
+.take_item
+	+set16im .cmd_item_take, $fb
+	jmp .go_send
 .go_north
 	+set16im .cmd_go_north, $fb
 	jmp .go_send
@@ -123,14 +137,10 @@
 
 .load_and_paint_room
 	jsr .load_room_title
+	jsr .load_room_appearance
 	jsr .load_room_title
 	jsr .load_room_desc
-	;; TODO load room appearance
 
-	lda #5
-	sta roomsize1
-	lda #34
-	sta roomsize2
 	lda #$20
 	jsr .clear_room
 	jsr .paint_room
@@ -138,8 +148,8 @@
 	sta roomdirty
 
 	;; TODO load room items
-	jsr .load_item_title
-  
+	jsr .load_item_titles
+	
 	rts
 	
 ;;; graphics
@@ -174,7 +184,7 @@
 	bne .got_byte
 	jmp .recv_and_draw
 .got_byte
-	inc $d020
+	;; inc bocol
 	ldy screenpos
 	and #$3f
 	sta ($fb), y
@@ -193,6 +203,36 @@
 	jsr .recv_and_draw
 	rts
 	
+.load_room_appearance
+	+set16im .cmd_room_appearance, $fb
+	jsr rs232_send_string
+	lda #0
+	sta screenpos
+	;; hack: load directly into room variables
+	+set16im roomitems, $fb
+	jsr .recv_and_draw
+	
+	sec
+	lda roomitems
+	sbc #48
+	sta roomitems
+	
+	sec
+	lda roomsize2
+	sbc #48
+	asl
+	adc #16
+	sta roomsize2
+	
+	sec
+	lda roombgcol
+	sbc #48
+	sta roombgcol
+	sta bgcol
+	sta bocol
+		
+	rts
+	
 .load_room_desc
 	+set16im .cmd_room_desc, $fb
 	jsr rs232_send_string
@@ -201,32 +241,59 @@
 	+set16im $0450, $fb
 	jsr .recv_and_draw
 	rts
+
+.itemnum	!byte 0
 	
-.load_item_title
+.load_item_titles
+	lda roomitems
+	bne .item_start
+	rts
+.item_start
+	sta .itemnum
+.item_loop
+	dec .itemnum
 	+set16im .cmd_item_title, $fb
+	lda .itemnum
+	clc
+	adc #48
+	ldy #2
+	sta ($fb), y									; item index number
 	jsr rs232_send_string
+
 	lda #0
 	sta screenpos
-	+set16im $0700, $fb
+	+set16im $05a4, $fb
+	ldy .itemnum
+	iny
+.item_lineloop
+	+add16im $fb, 40, $fb
+	dey
+	bne .item_lineloop
+	
 	jsr .recv_and_draw
+	
+	lda .itemnum
+	bne .item_loop								; more items to load?
 	rts
 
 .cmd_room_title !text "TR",10,0
-.cmd_room_desc  !text "DR",10,0
+.cmd_room_appearance !text "AR",10,0
+.cmd_room_desc	!text "DR",10,0
 .cmd_item_title !text "TI0",10,0
-.cmd_go_north   !text "GN",10,0
-.cmd_go_south   !text "GS",10,0
-.cmd_go_west    !text "GW",10,0
-.cmd_go_east    !text "GE",10,0
+.cmd_item_take	!text "PI0",10,0
+.cmd_go_north		!text "GN",10,0
+.cmd_go_south		!text "GS",10,0
+.cmd_go_west		!text "GW",10,0
+.cmd_go_east		!text "GE",10,0
 	
 .paint_room
 	+set16im $0540, $fb
 	ldx #10
 .pr_loop
-	lda #$6a 				; |
+	lda #$6a				; |
 	ldy roomsize1
 	sta ($fb), y
-	lda #$74 				; |
+	lda #$74				; |
 	ldy roomsize2
 	sta ($fb), y
 
@@ -258,7 +325,7 @@
 	sta ($fb), y
 	pla
 	tay
-        +add16im $fb, 40, $fb
+	+add16im $fb, 40, $fb
 	inx
 	dey
 	bne .pr_loop2
