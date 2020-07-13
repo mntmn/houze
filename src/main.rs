@@ -17,6 +17,7 @@ struct Room {
     title: String,
     text: String,
     exits: String,
+    color_bg: i8,
     size: i8,
     items: Vec<Item>
 }
@@ -28,7 +29,7 @@ struct Player {
     x: i32,
     y: i32,
     z: i32,
-    items: Vec<String>
+    items: Vec<Item>
 }
 
 #[derive(Debug)]
@@ -94,6 +95,10 @@ fn populate_demo_world(ctx: &Context) {
         title: "COFFEE MACHINE".to_string(),
         text: "JUST AN EMPTY COFFEE MACHINE.".to_string()
     };
+    let table = Item {
+        title: "TABLE".to_string(),
+        text: "FUNCTIONAL OFFICE TABLE.".to_string()
+    };
     
     let grndcof = Item {
         title: "GROUND COFFEE".to_string(),
@@ -104,14 +109,16 @@ fn populate_demo_world(ctx: &Context) {
         title: "BLAND OFFICE".to_string(),
         text: "A MODERN, GREY OFFICE WITH FUNCTIONAL TABLES AND CHAIRS. SYNTHETIC CARPET.".to_string(),
         exits: "N E".to_string(),
+        color_bg: 0,
         size: 5,
-        items: [cofmac].to_vec()
+        items: [cofmac, table.clone()].to_vec()
     });
 
     store_room_at(&ctx, 1001,1000,1000, &Room {
         title: "STORAGE CABINET".to_string(),
         text: "A NONDESCRIPT OFFICE STORAGE CABINET.".to_string(),
         exits: "W".to_string(),
+        color_bg: 1,
         size: 1,
         items: [grndcof].to_vec()
     });
@@ -120,6 +127,7 @@ fn populate_demo_world(ctx: &Context) {
         title: "CORRIDOR".to_string(),
         text: "A NARROW CORRIDOR CONNECTING OFFICE SPACES.".to_string(),
         exits: "N S".to_string(),
+        color_bg: 2,
         size: 3,
         items: [].to_vec()
     });
@@ -128,8 +136,9 @@ fn populate_demo_world(ctx: &Context) {
         title: "BLAND OFFICE #2".to_string(),
         text: "ANOTHER GREY OFFICE WITH FUNCTIONAL TABLES AND CHAIRS. SYNTHETIC CARPET.".to_string(),
         exits: "S".to_string(),
-        size: 5,
-        items: [].to_vec()
+        color_bg: 3,
+        size: 6,
+        items: [table.clone()].to_vec()
     });
 
     match get_player(&ctx, "mntmn".to_string()) {
@@ -175,7 +184,7 @@ fn handle_client(ctx: &Context, player: &mut Player, mut stream: TcpStream) {
         println!("Request: {}", buf);
         println!("Player position: {} {} {}", player.x,player.y,player.z);
 
-        let cur_room = get_room_at(&ctx, player.x,player.y,player.z).unwrap();
+        let mut cur_room = get_room_at(&ctx, player.x,player.y,player.z).unwrap();
         let ok_res = ".OK\n".to_string();
         let error_dir = "!DIR ERROR\n".to_string();
 
@@ -183,46 +192,39 @@ fn handle_client(ctx: &Context, player: &mut Player, mut stream: TcpStream) {
             [Some('T'),Some('R')] => {
                 format!("{}\n", cur_room.title)
             }
+            [Some('A'),Some('R')] => {
+                format!("{}{}{}\n", cur_room.items.len(), cur_room.size, cur_room.color_bg)
+            }
             [Some('D'),Some('R')] => {
                 format!("{}\n", cur_room.text)
             }
             [Some('T'),Some('I')] => {
-                // TODO handle indices
-                match &cur_room.items[..] {
-                    [] => "!\n".to_string(),
-                    [item, ..] => format!("{}\n", item.title)
+                let idx = buf.chars().nth(2).unwrap().to_digit(10).unwrap();
+                format!("{}\n", cur_room.items[idx as usize].title.clone())
+            }
+            [Some('P'),Some('I')] => {
+                // pick up item
+                let idx = buf.chars().nth(2).unwrap().to_digit(10).unwrap();
+                if idx as usize >= cur_room.items.len() {
+                    format!("!ITEM ERROR\n")
+                } else {
+                    let item = cur_room.items[idx as usize].clone();
+                    let mut i = 0;
+                    cur_room.items.retain(|_| (i != idx, i += 1).0);
+                    player.items.push(item);
+
+                    store_room_at(&ctx, player.x,player.y,player.z, &cur_room);
+                    store_player(&ctx, &player);
+
+                    format!(".OK\n")
                 }
             }
             [Some('G'),Some(dir)] => {
                 match dir {
-                    'N' => {
-                        if move_player(ctx, player, 0,1,0) {
-                            ok_res
-                        } else {
-                            error_dir
-                        }
-                    }
-                    'S' => {
-                        if move_player(ctx, player, 0,-1,0) {
-                            ok_res
-                        } else {
-                            error_dir
-                        }
-                    }
-                    'W' => {
-                        if move_player(ctx, player, 1,0,0) {
-                            ok_res
-                        } else {
-                            error_dir
-                        }
-                    }
-                    'E' => {
-                        if move_player(ctx, player, -1,0,0) {
-                            ok_res
-                        } else {
-                            error_dir
-                        }
-                    }
+                    'N' => if move_player(ctx, player, 0, 1,0) { ok_res } else { error_dir }
+                    'S' => if move_player(ctx, player, 0,-1,0) { ok_res } else { error_dir }
+                    'W' => if move_player(ctx, player,  1,0,0) { ok_res } else { error_dir }
+                    'E' => if move_player(ctx, player, -1,0,0) { ok_res } else { error_dir }
                     _ => error_dir
                 }
             }
